@@ -8,9 +8,15 @@ namespace ZombSoftBodies
 {
     public class SoftBody : MonoBehaviour
     {
+        [SerializeField] private bool setupOnAwake = false;
         [SerializeField] private bool setColliders = true;
-        [SerializeField] private bool twoWayConnections = false;
+        [SerializeField] private bool twoWayConnections = true;
         [SerializeField] SoftProps properties = new();
+
+        private void Awake()
+        {
+            if (setupOnAwake == true) Setup();
+        }
 
         public void Setup()
         {

@@ -37,9 +37,29 @@ namespace ZombSoftBodies
         {
             ConfigurableJoint j = source.trans.gameObject.AddComponent<ConfigurableJoint>();
             j.connectedBody = toConnect.rb;
-            j.xMotion = ConfigurableJointMotion.Locked;
-            j.yMotion = ConfigurableJointMotion.Locked;
-            j.zMotion = ConfigurableJointMotion.Locked;
+
+            j.enablePreprocessing = false;
+
+            j.xMotion = ConfigurableJointMotion.Limited;
+            j.yMotion = ConfigurableJointMotion.Limited;
+            j.zMotion = ConfigurableJointMotion.Limited;
+            j.xDrive = new JointDrive() { positionDamper = softProps.damping };
+            j.yDrive = new JointDrive() { positionDamper = softProps.damping };
+            j.zDrive = new JointDrive() { positionDamper = softProps.damping };
+            j.linearLimit = new SoftJointLimit() { limit = softProps.softness, bounciness = softProps.bounciness, contactDistance = 0.01f };
+            j.linearLimitSpring = new SoftJointLimitSpring() { spring = softProps.spring, damper = softProps.damping };
+
+            j.angularXMotion = ConfigurableJointMotion.Free;
+            j.angularYMotion = ConfigurableJointMotion.Free;
+            j.angularZMotion = ConfigurableJointMotion.Free;
+            //j.angularXDrive = new JointDrive() { positionDamper = 10.0f, maximumForce = 100.0f };
+            //j.angularYZDrive = new JointDrive() { positionDamper = 10.0f, maximumForce = 100.0f };
+            //j.angularYLimit = new SoftJointLimit() { limit = 30.0f };
+            //j.angularZLimit = new SoftJointLimit() { limit = 30.0f };
+            //j.highAngularXLimit = new SoftJointLimit() { limit = 30.0f };
+            //j.lowAngularXLimit = new SoftJointLimit() { limit = -30.0f };
+
+
             return j;
         }
 
@@ -124,7 +144,8 @@ namespace ZombSoftBodies
                 }
 
                 extents.Scale(colTrans.worldToLocalMatrix.lossyScale);
-                sCol.radius = Mathf.Max(extents.x, extents.y, extents.z);
+                //sCol.radius = Mathf.Max(extents.x, extents.y, extents.z);
+                sCol.radius = Mathf.Min(extents.x, extents.y, extents.z);//Min works better for softies
             }
             else if (col is CapsuleCollider cCol)
             {
@@ -155,21 +176,24 @@ namespace ZombSoftBodies
                     // X-axis is the longest
                     cCol.direction = 0;
                     cCol.height = extents.x * 2.0f;
-                    cCol.radius = Mathf.Max(extents.y, extents.z);
+                    //cCol.radius = Mathf.Max(extents.y, extents.z);
+                    cCol.radius = Mathf.Min(extents.y, extents.z);//Min works better for softies
                 }
                 else if (extents.y > extents.x && extents.y > extents.z)
                 {
                     // Y-axis is the longest
                     cCol.direction = 1;
                     cCol.height = extents.y * 2.0f;
-                    cCol.radius = Mathf.Max(extents.x, extents.z);
+                    //cCol.radius = Mathf.Max(extents.x, extents.z);
+                    cCol.radius = Mathf.Min(extents.x, extents.z);
                 }
                 else
                 {
                     // Z-axis is the longest (or all axes are equal)
                     cCol.direction = 2;
                     cCol.height = extents.z * 2.0f;
-                    cCol.radius = Mathf.Max(extents.x, extents.y);
+                    //cCol.radius = Mathf.Max(extents.x, extents.y);
+                    cCol.radius = Mathf.Min(extents.x, extents.y);
                 }
             }
             else
