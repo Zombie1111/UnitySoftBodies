@@ -4,6 +4,10 @@ using System.Threading.Tasks;
 using BoneData = SoftBodyGlobals.BoneData;
 using SoftProps = SoftBodyGlobals.SoftProps;
 
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
+
 namespace ZombSoftBodies
 {
     public class SoftBody : MonoBehaviour
@@ -89,7 +93,7 @@ namespace ZombSoftBodies
                     if (Application.isPlaying == false) DestroyImmediate(j);
                     else
 #endif
-                        Destroy(j);
+                    Destroy(j);
                 }
             }
 
@@ -102,10 +106,18 @@ namespace ZombSoftBodies
                 BoneData bd = bds[i];
 
                 //Set collider
-                if (setColliders == true && bd.trans.TryGetComponent(out Collider col) == true)
+                if (setColliders == true)
                 {
-                    SoftBodyHelpFuncs.SetColliderFromFromPoints(col,
-                        SoftBodyHelpFuncs.TransformPositionsWithMatrix(bd.wVerts, bd.trans.worldToLocalMatrix));
+                    if (bd.trans.TryGetComponent(out Collider col) == true)
+                    {
+                        SoftBodyHelpFuncs.SetColliderFromFromPoints(col,
+                            SoftBodyHelpFuncs.TransformPositionsWithMatrix(bd.wVerts, bd.trans.worldToLocalMatrix));
+
+#if UNITY_EDITOR
+                        if (Application.isPlaying == false) EditorUtility.SetDirty(col);
+#endif
+                    }
+                    else Debug.LogWarning(bd.trans.name + " is missing a collider, is this intended?");
                 }
 
                 //Set joint
@@ -145,7 +157,11 @@ namespace ZombSoftBodies
 
 #if UNITY_EDITOR
             if (Application.isPlaying == false)
+            {
+                EditorUtility.SetDirty(this);
+                EditorUtility.SetDirty(gameObject);
                 Debug.Log("Done generating SoftBody for " + transform.name);
+            }
 #endif
         }
     }
