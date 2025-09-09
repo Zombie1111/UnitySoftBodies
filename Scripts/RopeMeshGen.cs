@@ -32,13 +32,22 @@ namespace ZombSoftBodies
             needsBodyConfigUpdate = true;
         }
 
+        int prevBodyCount = 0;
+
         public void Tick(Transform meshTrans, Mesh mesh, List<Transform> bodies, float lerpAmount = 0.4f)
         {
             EndCompute(mesh);
-            if (mesh == null || bodies == null || bodies.Count < 2 || meshTrans == null) return;
+            if (mesh == null || bodies == null || bodies.Count < 2 || meshTrans == null)
+            {
+                mesh.Clear(true);
+                return;
+            }
 
             bool created = bodiesNative.isCreated;
-            int bodyCount = bodies.Count;
+            int newBodyCount = bodies.Count;
+            int bodyCount = needsBodyConfigUpdate == true || created == false
+                ? newBodyCount : prevBodyCount;
+            prevBodyCount = bodyCount;
 
             //Ensure native containers are valid
             if (EnsureLenght(ref grp_job.ropeBodies, bodyCount) == true)
@@ -50,7 +59,7 @@ namespace ZombSoftBodies
                 if (created == false) bodiesNative = new(bodies.Count);
                 int nativeBodyCount = bodiesNative.length;
 
-                for (int i = 0; i < bodyCount; i++)
+                for (int i = 0; i < newBodyCount; i++)
                 {
                     if (bodies[i] != null) last = bodies[i];
 
@@ -66,7 +75,7 @@ namespace ZombSoftBodies
                     SetBody(i);
                 }
 
-                for (int i = nativeBodyCount - 1; i >= bodyCount; i--)
+                for (int i = nativeBodyCount - 1; i >= newBodyCount; i--)
                 {
                     bodiesNative.RemoveAtSwapBack(i);
                 }
@@ -111,6 +120,8 @@ namespace ZombSoftBodies
         public float _ropeLenght => ropeLenght;
         private float ropeSpeedRatio = 0.0f;
         public float _ropeSpeedRatio => ropeSpeedRatio;
+        private Vector3 ropeAvgPos = Vector3.zero;
+        public Vector3 _ropeAvgPos => ropeAvgPos;
 
         private void EndCompute(Mesh mesh)
         {
@@ -127,6 +138,7 @@ namespace ZombSoftBodies
                 mesh.bounds = rd.bounds;
                 ropeLenght = rd.ropeLenght;
                 ropeSpeedRatio = rd.speedRatio;
+                ropeAvgPos = rd.avgBodyPos;
             }
         }
 
@@ -244,6 +256,7 @@ namespace ZombSoftBodies
                 bounds = new(Vector3.zero, Vector3.one * _highNumber);
                 ropeLenght = 0.0f;
                 speedRatio = 0.0f;
+                avgBodyPos = Vector3.zero;
             }
 
             public float decimation;
@@ -256,6 +269,7 @@ namespace ZombSoftBodies
             internal Bounds bounds;
             internal float ropeLenght;
             internal float speedRatio;
+            internal Vector3 avgBodyPos;
         }
 
         [BurstCompile]
@@ -301,6 +315,7 @@ namespace ZombSoftBodies
 
                 void ComputeSpeed()
                 {
+                    Vector3 totPos = Vector3.zero;
                     float minSpeed = float.MaxValue;
                     float maxSpeed = float.MinValue;
 
@@ -310,9 +325,11 @@ namespace ZombSoftBodies
                         float speedSqr = (rb.pos - rb.prevPos).sqrMagnitude;
                         minSpeed = Mathf.Min(minSpeed, speedSqr);
                         maxSpeed = Mathf.Max(maxSpeed, speedSqr);
+                        totPos += rb.pos;
                     }
 
                     data.speedRatio = (Mathf.Sqrt(maxSpeed) - Mathf.Sqrt(minSpeed)) / _deltaTime;
+                    data.avgBodyPos = totPos / bodyCount;
                 }
 
                 void PrepareChunks()
@@ -346,6 +363,11 @@ namespace ZombSoftBodies
                         if (chunkI == bodyCountM1)
                         {
                             previous = _ropeBodies[^2].rot;
+                            current = previous;
+                        }
+                        else if (chunkI == 0)
+                        {
+                            previous = _ropeBodies[1].rot;
                             current = previous;
                         }
                         else
@@ -493,8 +515,8 @@ namespace ZombSoftBodies
                     int verI = 0;
                     int indI = 0;
 
-                    Vector3 bMin = Vector3.one * _highNumber;  
-                    Vector3 bMax = Vector3.one * -_highNumber;  
+                    Vector3 bMin = Vector3.one * _highNumber;
+                    Vector3 bMax = Vector3.one * -_highNumber;
 
                     for (int i = 0; i < outputCount; i++)
                     {
