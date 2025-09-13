@@ -21,9 +21,7 @@ namespace ZombSoftBodies
         private bool jobIsActive = false;
         private JobHandle jobHandle;
         private ComputeRopeMesh crm_job;
-        private GetRopePositions grp_job;
         private Mesh prevMesh = null;
-        private TransformAccessArray bodiesNative;
 
         private bool needsBodyConfigUpdate = true;
 
@@ -32,58 +30,62 @@ namespace ZombSoftBodies
             needsBodyConfigUpdate = true;
         }
 
-        int prevBodyCount = 0;
-
         public void Tick(Transform meshTrans, Mesh mesh, List<Transform> bodies, float lerpAmount = 0.4f)
         {
             EndCompute(mesh);
             if (mesh == null || bodies == null || bodies.Count < 2 || meshTrans == null)
             {
-                mesh.Clear(true);
+                if (prevMesh != null) prevMesh.Clear(true);
                 return;
             }
 
-            bool created = bodiesNative.isCreated;
-            int newBodyCount = bodies.Count;
-            int bodyCount = needsBodyConfigUpdate == true || created == false
-                ? newBodyCount : prevBodyCount;
-            prevBodyCount = bodyCount;
-
-            //Ensure native containers are valid
-            if (EnsureLenght(ref grp_job.ropeBodies, bodyCount) == true)
-                crm_job.ropeBodies = grp_job.ropeBodies.AsReadOnly();
-
-            if (needsBodyConfigUpdate == true || created == false)
+            if (needsBodyConfigUpdate == true)
             {
+                int newBodyCount = bodies.Count;
+                int bodyCount = prevBodies.Count;
+                EnsureLenght(ref crm_job.ropeBodies, newBodyCount);
                 Transform last = meshTrans;
-                if (created == false) bodiesNative = new(bodies.Count);
-                int nativeBodyCount = bodiesNative.length;
 
                 for (int i = 0; i < newBodyCount; i++)
                 {
                     if (bodies[i] != null) last = bodies[i];
 
-                    if (i < nativeBodyCount)
+                    if (i < bodyCount)
                     {
-                        if (bodiesNative[i] == last) continue;
-                        bodiesNative[i] = last;
+                        if (prevBodies[i] == last) continue;
+                        prevBodies[i] = last;
                         SetBody(i);
                         continue;
                     }
 
-                    bodiesNative.Add(last);
+                    bodyCount++;
+                    prevBodies.Add(last);
                     SetBody(i);
                 }
 
-                for (int i = nativeBodyCount - 1; i >= newBodyCount; i--)
+                for (int i = bodyCount - 1; i >= newBodyCount; i--)
                 {
-                    bodiesNative.RemoveAtSwapBack(i);
+                    prevBodies.RemoveAtSwapBack(i);
+                    bodyCount--;
                 }
+
+                int pCount = (int)Mathf.Pow(2, ropeConfig.smoothning);
+                int n0 = bodyCount - 1;
+                int maxSmoothChunkCount = (n0 - 1) * pCount + 2;
+                int maxRawChunkCount = bodyCount;
+                EnsureLenght(ref crm_job.inputChunks, maxRawChunkCount);
+                EnsureLenght(ref crm_job.outputChunks, maxSmoothChunkCount);
+                EnsureLenght(ref crm_job.decimateMask, maxRawChunkCount);
+                EnsureCapacity(ref crm_job.rangeToCompute, maxRawChunkCount);
+                if (crm_job.ropeData.IsCreated == false) crm_job.ropeData = new(ropeConfig, Allocator.Persistent);
+                else crm_job.ropeData.Value = ropeConfig;
+
+                needsBodyConfigUpdate = false;
 
                 void SetBody(int i)
                 {
                     last.GetPositionAndRotation(out Vector3 pos, out Quaternion rot);
-                    grp_job.ropeBodies[i] = new()
+                    crm_job.ropeBodies[i] = new()
                     {
                         rot = rot,
                         pos = pos,
@@ -92,27 +94,13 @@ namespace ZombSoftBodies
                 }
             }
 
-            int pCount = (int)Mathf.Pow(2, ropeConfig.smoothning);
-            int n0 = bodyCount - 1;
-            int maxSmoothChunkCount = (n0 - 1) * pCount + 2;
-            int maxRawChunkCount = bodyCount;
-            EnsureLenght(ref crm_job.inputChunks, maxRawChunkCount);
-            EnsureLenght(ref crm_job.outputChunks, maxSmoothChunkCount);
-            EnsureLenght(ref crm_job.decimateMask, maxRawChunkCount);
-            EnsureCapacity(ref crm_job.rangeToCompute, maxRawChunkCount);
-            if (crm_job.ropeData.IsCreated == false) crm_job.ropeData = new(ropeConfig, Allocator.Persistent);
-            else if (needsBodyConfigUpdate == true) crm_job.ropeData.Value = ropeConfig;
-
-            needsBodyConfigUpdate = false;
-
             //Start job
             prevMesh = mesh;
-            grp_job.lerpAmount = lerpAmount;
             crm_job.deltaTime = Time.deltaTime;
             crm_job.wToL = meshTrans.worldToLocalMatrix;
             crm_job.meshDataArray = Mesh.AllocateWritableMeshData(1);
-            jobHandle = grp_job.Schedule(bodiesNative);
-            jobHandle = crm_job.Schedule(jobHandle);
+            GetRopePositions(lerpAmount);
+            jobHandle = crm_job.Schedule();
             jobIsActive = true;
         }
 
@@ -146,9 +134,7 @@ namespace ZombSoftBodies
         {
             EndCompute(null);//Make sure job aint running
 
-            if (bodiesNative.isCreated == true) bodiesNative.Dispose();
-            if (grp_job.ropeBodies.IsCreated == true) grp_job.ropeBodies.Dispose();
-
+            if (crm_job.ropeBodies.IsCreated == true) crm_job.ropeBodies.Dispose();
             if (crm_job.ropeData.IsCreated == true) crm_job.ropeData.Dispose();
             if (crm_job.rangeToCompute.IsCreated == true) crm_job.rangeToCompute.Dispose();
             if (crm_job.decimateMask.IsCreated == true) crm_job.decimateMask.Dispose();
@@ -225,21 +211,38 @@ namespace ZombSoftBodies
             public Quaternion rot;
         }
 
-        [BurstCompile]
-        private struct GetRopePositions : IJobParallelForTransform
-        {
-            public NativeArray<RopeBody> ropeBodies;
-            public float lerpAmount;
+        private readonly List<Transform> prevBodies = new(4);
 
-            public void Execute(int index, TransformAccess transform)
+        private void GetRopePositions(float lerpAmount)
+        {
+            for (int i = 0; i < prevBodies.Count; i++)
             {
-                RopeBody rb = ropeBodies[index];
-                rb.rot = transform.rotation;
+                RopeBody rb = crm_job.ropeBodies[i];
+                Transform trans = prevBodies[i];
+                if (trans == null) continue;
+
+                trans.GetPositionAndRotation(out Vector3 pos, out rb.rot);
                 rb.prevPos = rb.pos;
-                rb.pos = Vector3.Lerp(rb.pos, transform.position, lerpAmount);
-                ropeBodies[index] = rb;
+                rb.pos = Vector3.Lerp(rb.pos, pos, lerpAmount);
+                crm_job.ropeBodies[i] = rb;
             }
         }
+
+        //[BurstCompile]//Starting the job takes longer than simply getting on main thread
+        //private struct GetRopePositions : IJobParallelForTransform
+        //{
+        //    public NativeArray<RopeBody> ropeBodies;
+        //    public float lerpAmount;
+        //
+        //    public void Execute(int index, TransformAccess transform)
+        //    {
+        //        RopeBody rb = ropeBodies[index];
+        //        rb.rot = transform.rotation;
+        //        rb.prevPos = rb.pos;
+        //        rb.pos = Vector3.Lerp(rb.pos, transform.position, lerpAmount);
+        //        ropeBodies[index] = rb;
+        //    }
+        //}
 
         [System.Serializable]
         private struct RopeData
@@ -276,7 +279,7 @@ namespace ZombSoftBodies
         private struct ComputeRopeMesh : IJob
         {
             public Mesh.MeshDataArray meshDataArray;
-            public NativeArray<RopeBody>.ReadOnly ropeBodies;
+            public NativeArray<RopeBody> ropeBodies;
             public NativeReference<RopeData> ropeData;
             public Matrix4x4 wToL;
             public float deltaTime;
@@ -515,8 +518,8 @@ namespace ZombSoftBodies
                     int verI = 0;
                     int indI = 0;
 
-                    Vector3 bMin = Vector3.one * _highNumber;
-                    Vector3 bMax = Vector3.one * -_highNumber;
+                    Vector3 bMin = Vector3.one * _highNumber;  
+                    Vector3 bMax = Vector3.one * -_highNumber;  
 
                     for (int i = 0; i < outputCount; i++)
                     {
